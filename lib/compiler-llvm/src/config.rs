@@ -289,7 +289,7 @@ impl LLVM {
                 *((my_target_machine.target_machine as *mut u8).offset(0x410) as *mut u64) = 5;
                 std::ptr::copy_nonoverlapping(
                     c"lp64d".as_ptr(),
-                    (my_target_machine.target_machine as *mut i8).offset(0x418),
+                    (my_target_machine.target_machine as *mut u8).offset(0x418),
                     6,
                 );
 
