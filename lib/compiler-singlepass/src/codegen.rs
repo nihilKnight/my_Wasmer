@@ -7115,6 +7115,15 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         }
     }
 
+    /// Get constant value from stack constant tracker
+    fn get_stack_constant(&self, index: usize) -> Option<&ConstantValue> {
+        if index < self.constant_tracker.stack_constants.len() {
+            self.constant_tracker.stack_constants[index].as_ref()
+        } else {
+            None
+        }
+    }
+
     /// Check if constant folding can be performed (based on depth limit)
     fn can_constant_fold(&self) -> bool {
         // Check if current constant folding depth exceeds limit
@@ -7123,15 +7132,6 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             .count();
         
         current_depth <= self.max_constant_folding_depth
-    }
-
-    /// Get constant value from stack constant tracker
-    fn get_stack_constant(&self, index: usize) -> Option<&ConstantValue> {
-        if index < self.constant_tracker.stack_constants.len() {
-            self.constant_tracker.stack_constants[index].as_ref()
-        } else {
-            None
-        }
     }
 
     /// Check if the top two values are constants
