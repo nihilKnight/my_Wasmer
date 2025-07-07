@@ -99,6 +99,46 @@ pub struct FuncGen<'a, M: Machine> {
 
     /// Calling convention to use.
     calling_convention: CallingConvention,
+
+    /// Constant folding switch
+    enable_constant_folding: bool,
+
+    /// Maximum depth for constant folding
+    max_constant_folding_depth: usize,
+
+    /// Constant stack tracker
+    constant_tracker: ConstantTracker,
+}
+
+struct ConstantTracker {
+    /// Constant Value on the stack
+    stack_constants: Vec<Option<ConstantValue>>,
+
+    /// Constant folding statistics
+    stats: ConstantFoldingStats,
+}
+
+/// Constant Value representation
+#[derive(Debug, Clone, PartialEq)]
+enum ConstantValue {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+}
+
+/// Constant folding statistics
+#[derive(Debug, Default)]
+struct ConstantFoldingStats {
+    folded_operations: usize,
+    saved_instructions: usize,
+}
+
+/// Result of constant folding attempt
+#[derive(Debug)]
+enum ConstantFoldResult {
+    Applied,        // Constant folding applied
+    NotApplicable,  // Constant folding not applicable
 }
 
 struct SpecialLabelSet {
@@ -1189,6 +1229,13 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             relocations: vec![],
             special_labels,
             calling_convention,
+            // Constant folding related fields
+            enable_constant_folding: config.enable_constant_folding,
+            max_constant_folding_depth: config.max_constant_folding_depth,
+            constant_tracker: ConstantTracker {
+                stack_constants: vec![],
+                stats: ConstantFoldingStats::default(),
+            },
         };
         fg.emit_head()?;
         Ok(fg)
@@ -1198,6 +1245,31 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         !self.control_stack.is_empty()
     }
 
+    /* 
+    pub fn get_constant_folding_stats(&self) -> &ConstantFoldingStats {
+        &self.constant_tracker.stats
+    }
+
+    /// Print constant folding statistics
+    pub fn print_constant_folding_stats(&self) {
+        let stats = &self.constant_tracker.stats;
+        println!("Constant Folding Statistics:");
+        println!("  Folded operations: {}", stats.folded_operations);
+        println!("  Saved instructions: {}", stats.saved_instructions);
+    }
+
+    /// Check if constant folding is enabled
+    pub fn is_constant_folding_enabled(&self) -> bool {
+        self.enable_constant_folding
+    }
+
+    /// Get the maximum depth of constant folding
+    pub fn get_max_constant_folding_depth(&self) -> usize {
+        self.max_constant_folding_depth
+    }
+     */
+    
+    /// Get constant folding statistics
     pub fn feed_operator(&mut self, op: Operator) -> Result<(), CompileError> {
         assert!(self.fp_stack.len() <= self.value_stack.len());
 
@@ -1233,6 +1305,19 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             }
         } else {
             was_unreachable = false;
+        }
+
+        // If constant folding is enabled, try to perform constant folding
+        if self.enable_constant_folding {
+            match self.try_constant_fold_and_apply(&op)? {
+                ConstantFoldResult::Applied => return Ok(()),
+                ConstantFoldResult::NotApplicable => {}
+            }
+        }
+
+        // Update stack constant tracker
+        if self.enable_constant_folding {
+            self.update_stack_constants();
         }
 
         match op {
@@ -6753,4 +6838,324 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         }
     }
     */
+
+    /// Try to fold and apply constant folding result
+    fn try_constant_fold_and_apply(&mut self, op: &Operator) -> Result<ConstantFoldResult, CompileError> {
+        match op {
+            // Handle binary arithmetic operations
+            Operator::I32Add => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_add(b)),
+            Operator::I32Sub => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_sub(b)),
+            Operator::I32Mul => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_mul(b)),
+            Operator::I32DivU => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_div(b)),
+            Operator::I32DivS => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_div(b)),
+            Operator::I32RemU => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_rem(b)),
+            Operator::I32RemS => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_rem(b)),
+            Operator::I32And => self.try_fold_binary_op_and_apply(|a, b| a & b),
+            Operator::I32Or => self.try_fold_binary_op_and_apply(|a, b| a | b),
+            Operator::I32Xor => self.try_fold_binary_op_and_apply(|a, b| a ^ b),
+            
+            // Handle comparison operations
+            Operator::I32Eq => self.try_fold_comparison_and_apply(|a, b| a == b),
+            Operator::I32Ne => self.try_fold_comparison_and_apply(|a, b| a != b),
+            Operator::I32LtU => self.try_fold_comparison_and_apply(|a, b| (a as u32) < (b as u32)),
+            Operator::I32LeU => self.try_fold_comparison_and_apply(|a, b| (a as u32) <= (b as u32)),
+            Operator::I32GtU => self.try_fold_comparison_and_apply(|a, b| (a as u32) > (b as u32)),
+            Operator::I32GeU => self.try_fold_comparison_and_apply(|a, b| (a as u32) >= (b as u32)),
+            Operator::I32LtS => self.try_fold_comparison_and_apply(|a, b| a < b),
+            Operator::I32LeS => self.try_fold_comparison_and_apply(|a, b| a <= b),
+            Operator::I32GtS => self.try_fold_comparison_and_apply(|a, b| a > b),
+            Operator::I32GeS => self.try_fold_comparison_and_apply(|a, b| a >= b),
+            
+            // Handle unary operations
+            Operator::I32Clz => self.try_fold_unary_op_and_apply(|a| a.leading_zeros() as i32),
+            Operator::I32Ctz => self.try_fold_unary_op_and_apply(|a| a.trailing_zeros() as i32),
+            Operator::I32Popcnt => self.try_fold_unary_op_and_apply(|a| a.count_ones() as i32),
+            Operator::I32Eqz => self.try_fold_unary_op_and_apply(|a| if a == 0 { 1 } else { 0 }),
+            
+            // Handle shift operations
+            Operator::I32Shl => self.try_fold_shift_and_apply(|a, b| a.wrapping_shl(b as u32)),
+            Operator::I32ShrU => self.try_fold_shift_and_apply(|a, b| (a as u32).wrapping_shr(b as u32) as i32),
+            Operator::I32ShrS => self.try_fold_shift_and_apply(|a, b| a.wrapping_shr(b as u32)),
+            Operator::I32Rotl => self.try_fold_shift_and_apply(|a, b| a.rotate_left(b as u32) as i32),
+            Operator::I32Rotr => self.try_fold_shift_and_apply(|a, b| a.rotate_right(b as u32) as i32),
+            
+            // Other operations do not perform constant folding
+            _ => Ok(ConstantFoldResult::NotApplicable),
+        }
+    }
+
+    /// Try to fold binary arithmetic operations and apply directly
+    fn try_fold_binary_op_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(i32, i32) -> i32,
+    {
+        // Check if constant folding can be performed
+        if !self.can_constant_fold() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        // Check if the top two values are constants
+        if !self.are_top_two_constants() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 2;
+        let b_index = stack_len - 1;
+        
+        // Get constant values from stack constant tracker
+        let a_constant = self.get_stack_constant(a_index);
+        let b_constant = self.get_stack_constant(b_index);
+        
+        if let (Some(ConstantValue::I32(a)), Some(ConstantValue::I32(b))) = (a_constant, b_constant) {
+            // Perform constant folding
+            let result = op(*a, *b);
+            
+            // Update statistics
+            self.constant_tracker.stats.folded_operations += 1;
+            self.constant_tracker.stats.saved_instructions += 1;
+            
+            // Remove original operands
+            self.value_stack.pop(); // Remove second operand
+            self.value_stack.pop(); // Remove first operand
+            
+            // Remove corresponding stack constant tracker
+            self.constant_tracker.stack_constants.pop();
+            self.constant_tracker.stack_constants.pop();
+            
+            // Add folded constant
+            self.value_stack.push(Location::Imm32(result as u32));
+            self.state.wasm_stack.push(WasmAbstractValue::Const(result as u32 as u64));
+            
+            // Update stack constant tracker
+            self.constant_tracker.stack_constants.push(Some(ConstantValue::I32(result)));
+            
+            Ok(ConstantFoldResult::Applied)
+        } else {
+            Ok(ConstantFoldResult::NotApplicable)
+        }
+    }
+
+    /// Try to fold comparison operations and apply directly
+    fn try_fold_comparison_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(i32, i32) -> bool,
+    {
+        // Check if constant folding can be performed
+        if !self.can_constant_fold() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        // Check if the top two values are constants
+        if !self.are_top_two_constants() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 2;
+        let b_index = stack_len - 1;
+        
+        // Get constant values from stack constant tracker
+        let a_constant = self.get_stack_constant(a_index);
+        let b_constant = self.get_stack_constant(b_index);
+        
+        if let (Some(ConstantValue::I32(a)), Some(ConstantValue::I32(b))) = (a_constant, b_constant) {
+            // Perform constant folding
+            let result = if op(*a, *b) { 1 } else { 0 };
+            
+            // Update statistics
+            self.constant_tracker.stats.folded_operations += 1;
+            self.constant_tracker.stats.saved_instructions += 1;
+            
+            // Remove original operands
+            self.value_stack.pop(); // Remove second operand
+            self.value_stack.pop(); // Remove first operand
+            
+            // Remove corresponding stack constant tracker
+            self.constant_tracker.stack_constants.pop();
+            self.constant_tracker.stack_constants.pop();
+            
+            // Add folded constant
+            self.value_stack.push(Location::Imm32(result as u32));
+            self.state.wasm_stack.push(WasmAbstractValue::Const(result as u32 as u64));
+            
+            // Update stack constant tracker
+            self.constant_tracker.stack_constants.push(Some(ConstantValue::I32(result)));
+            
+            Ok(ConstantFoldResult::Applied)
+        } else {
+            Ok(ConstantFoldResult::NotApplicable)
+        }
+    }
+
+    /// Try to fold unary operations and apply directly
+    fn try_fold_unary_op_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(i32) -> i32,
+    {
+        // Check if constant folding can be performed
+        if !self.can_constant_fold() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        // Check if the top value is a constant
+        if !self.is_top_constant() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 1;
+        
+        // Get constant values from stack constant tracker
+        let a_constant = self.get_stack_constant(a_index);
+        
+        if let Some(ConstantValue::I32(a)) = a_constant {
+            // Perform constant folding
+            let result = op(*a);
+            
+            // Update statistics
+            self.constant_tracker.stats.folded_operations += 1;
+            self.constant_tracker.stats.saved_instructions += 1;
+            
+            // Remove original operand
+            self.value_stack.pop();
+            
+            // Remove corresponding stack constant tracker
+            self.constant_tracker.stack_constants.pop();
+            
+            // Add folded constant
+            self.value_stack.push(Location::Imm32(result as u32));
+            self.state.wasm_stack.push(WasmAbstractValue::Const(result as u32 as u64));
+            
+            // Update stack constant tracker
+            self.constant_tracker.stack_constants.push(Some(ConstantValue::I32(result)));
+            
+            Ok(ConstantFoldResult::Applied)
+        } else {
+            Ok(ConstantFoldResult::NotApplicable)
+        }
+    }
+
+    /// Try to fold shift operations and apply directly
+    fn try_fold_shift_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(i32, i32) -> i32,
+    {
+        // Check if constant folding can be performed
+        if !self.can_constant_fold() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        // Check if the top two values are constants
+        if !self.are_top_two_constants() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 2;
+        let b_index = stack_len - 1;
+        
+        // Get constant values from stack constant tracker
+        let a_constant = self.get_stack_constant(a_index);
+        let b_constant = self.get_stack_constant(b_index);
+        
+        if let (Some(ConstantValue::I32(a)), Some(ConstantValue::I32(b))) = (a_constant, b_constant) {
+            // Ensure the shift amount is within a reasonable range
+            let shift_amount = b & 31; // For 32-bit integers, the shift amount should be modulo 32
+            let result = op(*a, shift_amount);
+            
+            // Update statistics
+            self.constant_tracker.stats.folded_operations += 1;
+            self.constant_tracker.stats.saved_instructions += 1;
+            
+            // Remove original operands
+            self.value_stack.pop(); // Remove second operand
+            self.value_stack.pop(); // Remove first operand
+            
+            // Remove corresponding stack constant tracker
+            self.constant_tracker.stack_constants.pop();
+            self.constant_tracker.stack_constants.pop();
+            
+            // Add folded constant
+            self.value_stack.push(Location::Imm32(result as u32));
+            self.state.wasm_stack.push(WasmAbstractValue::Const(result as u32 as u64));
+            
+            // Update stack constant tracker
+            self.constant_tracker.stack_constants.push(Some(ConstantValue::I32(result)));
+            
+            Ok(ConstantFoldResult::Applied)
+        } else {
+            Ok(ConstantFoldResult::NotApplicable)
+        }
+    }
+
+    /// Get constant value from location (supports all types)
+    fn get_constant_value_any(&self, loc: &Location<M::GPR, M::SIMD>) -> Result<Option<ConstantValue>, CompileError> {
+        match loc {
+            Location::Imm32(value) => Ok(Some(ConstantValue::I32(*value as i32))),
+            Location::Imm64(value) => Ok(Some(ConstantValue::I64(*value as i64))),
+            _ => Ok(None),
+        }
+    }
+
+    /// Update stack constant tracker
+    fn update_stack_constants(&mut self) {
+        // Ensure stack_constants length matches value_stack
+        while self.constant_tracker.stack_constants.len() < self.value_stack.len() {
+            self.constant_tracker.stack_constants.push(None);
+        }
+        
+        // Update constant value for each position
+        for (i, loc) in self.value_stack.iter().enumerate() {
+            if let Ok(Some(constant)) = self.get_constant_value_any(loc) {
+                self.constant_tracker.stack_constants[i] = Some(constant);
+            } else {
+                self.constant_tracker.stack_constants[i] = None;
+            }
+        }
+    }
+
+    /// Check if constant folding can be performed (based on depth limit)
+    fn can_constant_fold(&self) -> bool {
+        // Check if current constant folding depth exceeds limit
+        let current_depth = self.constant_tracker.stack_constants.iter()
+            .filter(|x| (**x).is_some())
+            .count();
+        
+        current_depth <= self.max_constant_folding_depth
+    }
+
+    /// Get constant value from stack constant tracker
+    fn get_stack_constant(&self, index: usize) -> Option<&ConstantValue> {
+        if index < self.constant_tracker.stack_constants.len() {
+            self.constant_tracker.stack_constants[index].as_ref()
+        } else {
+            None
+        }
+    }
+
+    /// Check if the top two values are constants
+    fn are_top_two_constants(&self) -> bool {
+        if self.value_stack.len() < 2 {
+            return false;
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 2;
+        let b_index = stack_len - 1;
+        
+        self.get_stack_constant(a_index).is_some() && 
+        self.get_stack_constant(b_index).is_some()
+    }
+
+    /// Check if the top value is a constant
+    fn is_top_constant(&self) -> bool {
+        if self.value_stack.is_empty() {
+            return false;
+        }
+        
+        let top_index = self.value_stack.len() - 1;
+        self.get_stack_constant(top_index).is_some()
+    }
+
 }

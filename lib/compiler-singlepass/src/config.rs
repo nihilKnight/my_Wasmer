@@ -14,6 +14,12 @@ pub struct Singlepass {
     pub(crate) enable_nan_canonicalization: bool,
     /// The middleware chain.
     pub(crate) middlewares: Vec<Arc<dyn ModuleMiddleware>>,
+
+    /// enable constant folding
+    pub enable_constant_folding: bool,
+
+    /// max depth of constant folding
+    pub max_constant_folding_depth: usize,
 }
 
 impl Singlepass {
@@ -23,6 +29,8 @@ impl Singlepass {
         Self {
             enable_nan_canonicalization: true,
             middlewares: vec![],
+            enable_constant_folding: true,
+            max_constant_folding_depth: 10,
         }
     }
 
