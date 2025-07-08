@@ -16,6 +16,7 @@ use anyhow::{bail, Result};
 use wasmer::sys::*;
 use wasmer::*;
 use wasmer_types::{target::Target, Features};
+use tracing::debug;
 
 #[cfg(feature = "compiler")]
 use wasmer_compiler::CompilerConfig;
@@ -317,6 +318,9 @@ impl RuntimeOptions {
         required_features: &Features,
         target: &Target,
     ) -> Result<Engine> {
+
+        // println!("BUGSHOT-0708: required_features: {:?}", required_features);
+
         let backends = self.get_available_backends()?;
         let filtered_backends =
             Self::filter_backends_by_features(backends.clone(), required_features, target);
