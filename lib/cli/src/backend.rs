@@ -32,6 +32,7 @@ pub struct WasmFeatures {
     pub simd: bool,
 
     /// Disable support for the threads proposal.
+    /// 
     #[clap(long = "disable-threads")]
     pub disable_threads: bool,
 
