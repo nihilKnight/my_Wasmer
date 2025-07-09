@@ -6940,6 +6940,7 @@ name = "wasmer-compiler-singlepass"
 version = "6.0.1"
 dependencies = [
  "byteorder",
+ "criterion",
  "dynasm",
  "dynasmrt",
  "enumset",
