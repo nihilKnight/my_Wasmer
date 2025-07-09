@@ -273,6 +273,7 @@ pub struct ControlFrame {
     pub fp_stack_depth: usize,
     pub state: MachineState,
     pub state_diff_id: usize,
+    pub constants_in_block: u32,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -693,7 +694,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             self.machine
                 .get_simple_param_location(0, calling_convention),
             Location::GPR(self.machine.get_vmctx_reg()),
-        )?;
+        )?; // vmctx
 
         // Initialize all normal locals to zero.
         let mut init_stack_loc_cnt = 0;
@@ -764,6 +765,14 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         let loc = self.value_stack.pop().ok_or_else(|| {
             CompileError::Codegen("pop_value_released: value stack is empty".to_owned())
         })?;
+        
+        // Check if the popped location is a constant and decrement the counter if so.
+        if matches!(loc, Location::Imm32(_) | Location::Imm64(_)) {
+            if let Some(frame) = self.control_stack.last_mut() {
+                frame.constants_in_block = frame.constants_in_block.saturating_sub(1);
+            }
+        }
+
         self.get_location_released(loc)
     }
 
@@ -1148,6 +1157,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             fp_stack_depth: 0,
             state: self.state.clone(),
             state_diff_id,
+            constants_in_block: 0,
         });
 
         // TODO: Full preemption by explicit signal checking
@@ -1484,6 +1494,9 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                 }?;
             }
             Operator::I32Const { value } => {
+                if let Some(frame) = self.control_stack.last_mut() {
+                    frame.constants_in_block += 1;
+                }
                 self.value_stack.push(Location::Imm32(value as u32));
                 self.state
                     .wasm_stack
@@ -1654,6 +1667,9 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                 self.machine.i32_cmp_ge_s(loc_a, loc_b, ret)?;
             }
             Operator::I64Const { value } => {
+                if let Some(frame) = self.control_stack.last_mut() {
+                    frame.constants_in_block += 1;
+                }
                 let value = value as u64;
                 self.value_stack.push(Location::Imm64(value));
                 self.state.wasm_stack.push(WasmAbstractValue::Const(value));
@@ -1917,6 +1933,9 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             }
 
             Operator::F32Const { value } => {
+                if let Some(frame) = self.control_stack.last_mut() {
+                    frame.constants_in_block += 1;
+                }
                 self.value_stack.push(Location::Imm32(value.bits()));
                 self.fp_stack
                     .push(FloatValue::new(self.value_stack.len() - 1));
@@ -2126,6 +2145,9 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             }
 
             Operator::F64Const { value } => {
+                if let Some(frame) = self.control_stack.last_mut() {
+                    frame.constants_in_block += 1;
+                }
                 self.value_stack.push(Location::Imm64(value.bits()));
                 self.fp_stack
                     .push(FloatValue::new(self.value_stack.len() - 1));
@@ -3064,6 +3086,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                     fp_stack_depth: self.fp_stack.len(),
                     state: self.state.clone(),
                     state_diff_id: self.get_state_diff(),
+                    constants_in_block: 0,
                 };
                 self.control_stack.push(frame);
                 self.machine
@@ -3187,6 +3210,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                     fp_stack_depth: self.fp_stack.len(),
                     state: self.state.clone(),
                     state_diff_id: self.get_state_diff(),
+                    constants_in_block: 0,
                 };
                 self.control_stack.push(frame);
             }
@@ -3213,6 +3237,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                     fp_stack_depth: self.fp_stack.len(),
                     state: self.state.clone(),
                     state_diff_id,
+                    constants_in_block: 0,
                 });
                 self.machine.emit_label(label)?;
 
@@ -6890,7 +6915,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         F: FnOnce(i32, i32) -> i32,
     {
         // Check if constant folding can be performed
-        if !self.can_constant_fold() {
+        if !self.can_constant_fold(2) {
             return Ok(ConstantFoldResult::NotApplicable);
         }
         
@@ -6919,6 +6944,10 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             self.value_stack.pop(); // Remove second operand
             self.value_stack.pop(); // Remove first operand
             
+            if let Some(frame) = self.control_stack.last_mut() {
+                frame.constants_in_block = frame.constants_in_block.saturating_sub(1);
+            }
+
             // Remove corresponding stack constant tracker
             self.constant_tracker.stack_constants.pop();
             self.constant_tracker.stack_constants.pop();
@@ -6942,7 +6971,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         F: FnOnce(i32, i32) -> bool,
     {
         // Check if constant folding can be performed
-        if !self.can_constant_fold() {
+        if !self.can_constant_fold(2) {
             return Ok(ConstantFoldResult::NotApplicable);
         }
         
@@ -6970,6 +6999,10 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             // Remove original operands
             self.value_stack.pop(); // Remove second operand
             self.value_stack.pop(); // Remove first operand
+
+            if let Some(frame) = self.control_stack.last_mut() {
+                frame.constants_in_block = frame.constants_in_block.saturating_sub(1);
+            }
             
             // Remove corresponding stack constant tracker
             self.constant_tracker.stack_constants.pop();
@@ -6994,7 +7027,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         F: FnOnce(i32) -> i32,
     {
         // Check if constant folding can be performed
-        if !self.can_constant_fold() {
+        if !self.can_constant_fold(1) {
             return Ok(ConstantFoldResult::NotApplicable);
         }
         
@@ -7042,7 +7075,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         F: FnOnce(i32, i32) -> i32,
     {
         // Check if constant folding can be performed
-        if !self.can_constant_fold() {
+        if !self.can_constant_fold(2) {
             return Ok(ConstantFoldResult::NotApplicable);
         }
         
@@ -7071,6 +7104,10 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             // Remove original operands
             self.value_stack.pop(); // Remove second operand
             self.value_stack.pop(); // Remove first operand
+
+            if let Some(frame) = self.control_stack.last_mut() {
+                frame.constants_in_block = frame.constants_in_block.saturating_sub(1);
+            }
             
             // Remove corresponding stack constant tracker
             self.constant_tracker.stack_constants.pop();
@@ -7125,7 +7162,20 @@ impl<'a, M: Machine> FuncGen<'a, M> {
     }
 
     /// Check if constant folding can be performed (based on depth limit)
-    fn can_constant_fold(&self) -> bool {
+    fn can_constant_fold(&self, required_constants: u32) -> bool {
+        if !self.enable_constant_folding {
+            return false;
+        }
+
+        if let Some(frame) = self.control_stack.last() {
+            if frame.constants_in_block < required_constants {
+                return false;
+            }
+        } else {
+            // No control frame, assume no folding.
+            return false;
+        }
+
         // Check if current constant folding depth exceeds limit
         let current_depth = self.constant_tracker.stack_constants.iter()
             .filter(|x| (**x).is_some())
