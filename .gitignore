@@ -36,3 +36,4 @@ link.tar.gz
 *.sh
 qemu_rustc_20250630-122346_3413183.core
 **/Cargo.lock
+*.log

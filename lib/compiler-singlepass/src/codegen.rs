@@ -253,6 +253,22 @@ impl<T> PopMany<T> for Vec<T> {
     }
 }
 
+impl<T> PopMany<T> for SmallVec<[T; 1]> {
+    fn peek1(&self) -> Result<&T, CompileError> {
+        self.last().ok_or_else(|| CompileError::Codegen("peek1: stack empty".to_string()))
+    }
+
+    fn pop1(&mut self) -> Result<T, CompileError> {
+        self.pop().ok_or_else(|| CompileError::Codegen("pop1: stack empty".to_string()))
+    }
+
+    fn pop2(&mut self) -> Result<(T, T), CompileError> {
+        let b = self.pop().ok_or_else(|| CompileError::Codegen("pop2: stack empty".to_string()))?;
+        let a = self.pop().ok_or_else(|| CompileError::Codegen("pop2: stack empty".to_string()))?;
+        Ok((a, b))
+    }
+}
+
 trait WpTypeExt {
     fn is_float(&self) -> bool;
 }
@@ -776,6 +792,14 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         self.get_location_released(loc)
     }
 
+    /// Prepare data for unary operator with 1 input and 1 output.
+    fn i1o1_prepare(&mut self, ty: WpType) -> Result<(Location<M::GPR, M::SIMD>, Location<M::GPR, M::SIMD>), CompileError> {
+        let loc_a = self.pop_value_released()?;
+        let ret = self.acquire_locations(&[(ty, MachineValue::WasmStack(self.value_stack.len()))], false)?.pop1()?;
+        self.value_stack.push(ret);
+        Ok((loc_a, ret))
+    }
+
     /// Prepare data for binary operator with 2 inputs and 1 output.
     fn i2o1_prepare(&mut self, ty: WpType) -> Result<I2O1<M::GPR, M::SIMD>, CompileError> {
         let loc_b = self.pop_value_released()?;
@@ -1255,30 +1279,6 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         !self.control_stack.is_empty()
     }
 
-    /* 
-    pub fn get_constant_folding_stats(&self) -> &ConstantFoldingStats {
-        &self.constant_tracker.stats
-    }
-
-    /// Print constant folding statistics
-    pub fn print_constant_folding_stats(&self) {
-        let stats = &self.constant_tracker.stats;
-        println!("Constant Folding Statistics:");
-        println!("  Folded operations: {}", stats.folded_operations);
-        println!("  Saved instructions: {}", stats.saved_instructions);
-    }
-
-    /// Check if constant folding is enabled
-    pub fn is_constant_folding_enabled(&self) -> bool {
-        self.enable_constant_folding
-    }
-
-    /// Get the maximum depth of constant folding
-    pub fn get_max_constant_folding_depth(&self) -> usize {
-        self.max_constant_folding_depth
-    }
-     */
-    
     /// Get constant folding statistics
     pub fn feed_operator(&mut self, op: Operator) -> Result<(), CompileError> {
         assert!(self.fp_stack.len() <= self.value_stack.len());
@@ -1502,170 +1502,35 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                     .wasm_stack
                     .push(WasmAbstractValue::Const(value as u32 as u64));
             }
-            Operator::I32Add => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.emit_binop_add32(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Sub => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.emit_binop_sub32(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Mul => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.emit_binop_mul32(loc_a, loc_b, ret)?;
-            }
-            Operator::I32DivU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                let offset = self.machine.emit_binop_udiv32(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I32DivS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                let offset = self.machine.emit_binop_sdiv32(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I32RemU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                let offset = self.machine.emit_binop_urem32(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I32RemS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                let offset = self.machine.emit_binop_srem32(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I32And => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.emit_binop_and32(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Or => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.emit_binop_or32(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Xor => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.emit_binop_xor32(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Eq => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_eq(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Ne => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_ne(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Eqz => {
-                let loc_a = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I32, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.machine.i32_cmp_eq(loc_a, Location::Imm32(0), ret)?;
-                self.value_stack.push(ret);
-            }
-            Operator::I32Clz => {
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I32, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.i32_clz(loc, ret)?;
-            }
-            Operator::I32Ctz => {
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I32, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.i32_ctz(loc, ret)?;
-            }
-            Operator::I32Popcnt => {
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I32, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.i32_popcnt(loc, ret)?;
-            }
-            Operator::I32Shl => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_shl(loc_a, loc_b, ret)?;
-            }
-            Operator::I32ShrU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_shr(loc_a, loc_b, ret)?;
-            }
-            Operator::I32ShrS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_sar(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Rotl => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_rol(loc_a, loc_b, ret)?;
-            }
-            Operator::I32Rotr => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_ror(loc_a, loc_b, ret)?;
-            }
-            Operator::I32LtU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_lt_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I32LeU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_le_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I32GtU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_gt_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I32GeU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_ge_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I32LtS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_lt_s(loc_a, loc_b, ret)?;
-            }
-            Operator::I32LeS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_le_s(loc_a, loc_b, ret)?;
-            }
-            Operator::I32GtS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_gt_s(loc_a, loc_b, ret)?;
-            }
-            Operator::I32GeS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.i32_cmp_ge_s(loc_a, loc_b, ret)?;
-            }
+            Operator::I32Add => self.emit_bop(WpType::I32, M::emit_binop_add32)?,
+            Operator::I32Sub => self.emit_bop(WpType::I32, M::emit_binop_sub32)?,
+            Operator::I32Mul => self.emit_bop(WpType::I32, M::emit_binop_mul32)?,
+            Operator::I32DivU => self.emit_div_or_rem(WpType::I32, M::emit_binop_udiv32)?,
+            Operator::I32DivS => self.emit_div_or_rem(WpType::I32, M::emit_binop_sdiv32)?,
+            Operator::I32RemU => self.emit_div_or_rem(WpType::I32, M::emit_binop_urem32)?,
+            Operator::I32RemS => self.emit_div_or_rem(WpType::I32, M::emit_binop_srem32)?,
+            Operator::I32And => self.emit_bop(WpType::I32, M::emit_binop_and32)?,
+            Operator::I32Or => self.emit_bop(WpType::I32, M::emit_binop_or32)?,
+            Operator::I32Xor => self.emit_bop(WpType::I32, M::emit_binop_xor32)?,
+            Operator::I32Eq => self.emit_bop(WpType::I32, M::i32_cmp_eq)?,
+            Operator::I32Ne => self.emit_bop(WpType::I32, M::i32_cmp_ne)?,
+            Operator::I32Eqz => self.emit_uop(WpType::I32, |m, loc, ret| m.i32_cmp_eq(loc, Location::Imm32(0), ret))?,
+            Operator::I32Clz => self.emit_uop(WpType::I32, M::i32_clz)?,
+            Operator::I32Ctz => self.emit_uop(WpType::I32, M::i32_ctz)?,
+            Operator::I32Popcnt => self.emit_uop(WpType::I32, M::i32_popcnt)?,
+            Operator::I32Shl => self.emit_bop(WpType::I32, M::i32_shl)?,
+            Operator::I32ShrU => self.emit_bop(WpType::I32, M::i32_shr)?,
+            Operator::I32ShrS => self.emit_bop(WpType::I32, M::i32_sar)?,
+            Operator::I32Rotl => self.emit_bop(WpType::I32, M::i32_rol)?,
+            Operator::I32Rotr => self.emit_bop(WpType::I32, M::i32_ror)?,
+            Operator::I32LtU => self.emit_bop(WpType::I32, M::i32_cmp_lt_u)?,
+            Operator::I32LeU => self.emit_bop(WpType::I32, M::i32_cmp_le_u)?,
+            Operator::I32GtU => self.emit_bop(WpType::I32, M::i32_cmp_gt_u)?,
+            Operator::I32GeU => self.emit_bop(WpType::I32, M::i32_cmp_ge_u)?,
+            Operator::I32LtS => self.emit_bop(WpType::I32, M::i32_cmp_lt_s)?,
+            Operator::I32LeS => self.emit_bop(WpType::I32, M::i32_cmp_le_s)?,
+            Operator::I32GtS => self.emit_bop(WpType::I32, M::i32_cmp_gt_s)?,
+            Operator::I32GeS => self.emit_bop(WpType::I32, M::i32_cmp_ge_s)?,
             Operator::I64Const { value } => {
                 if let Some(frame) = self.control_stack.last_mut() {
                     frame.constants_in_block += 1;
@@ -1674,170 +1539,35 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                 self.value_stack.push(Location::Imm64(value));
                 self.state.wasm_stack.push(WasmAbstractValue::Const(value));
             }
-            Operator::I64Add => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.emit_binop_add64(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Sub => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.emit_binop_sub64(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Mul => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.emit_binop_mul64(loc_a, loc_b, ret)?;
-            }
-            Operator::I64DivU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                let offset = self.machine.emit_binop_udiv64(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I64DivS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                let offset = self.machine.emit_binop_sdiv64(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I64RemU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                let offset = self.machine.emit_binop_urem64(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I64RemS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                let offset = self.machine.emit_binop_srem64(
-                    loc_a,
-                    loc_b,
-                    ret,
-                    self.special_labels.integer_division_by_zero,
-                    self.special_labels.integer_overflow,
-                )?;
-                self.mark_offset_trappable(offset);
-            }
-            Operator::I64And => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.emit_binop_and64(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Or => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.emit_binop_or64(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Xor => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.emit_binop_xor64(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Eq => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_eq(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Ne => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_ne(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Eqz => {
-                let loc_a = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.machine.i64_cmp_eq(loc_a, Location::Imm64(0), ret)?;
-                self.value_stack.push(ret);
-            }
-            Operator::I64Clz => {
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.i64_clz(loc, ret)?;
-            }
-            Operator::I64Ctz => {
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.i64_ctz(loc, ret)?;
-            }
-            Operator::I64Popcnt => {
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::I64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.i64_popcnt(loc, ret)?;
-            }
-            Operator::I64Shl => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_shl(loc_a, loc_b, ret)?;
-            }
-            Operator::I64ShrU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_shr(loc_a, loc_b, ret)?;
-            }
-            Operator::I64ShrS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_sar(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Rotl => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_rol(loc_a, loc_b, ret)?;
-            }
-            Operator::I64Rotr => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_ror(loc_a, loc_b, ret)?;
-            }
-            Operator::I64LtU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_lt_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I64LeU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_le_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I64GtU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_gt_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I64GeU => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_ge_u(loc_a, loc_b, ret)?;
-            }
-            Operator::I64LtS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_lt_s(loc_a, loc_b, ret)?;
-            }
-            Operator::I64LeS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_le_s(loc_a, loc_b, ret)?;
-            }
-            Operator::I64GtS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_gt_s(loc_a, loc_b, ret)?;
-            }
-            Operator::I64GeS => {
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I64)?;
-                self.machine.i64_cmp_ge_s(loc_a, loc_b, ret)?;
-            }
+            Operator::I64Add => self.emit_bop(WpType::I64, M::emit_binop_add64)?,
+            Operator::I64Sub => self.emit_bop(WpType::I64, M::emit_binop_sub64)?,
+            Operator::I64Mul => self.emit_bop(WpType::I64, M::emit_binop_mul64)?,
+            Operator::I64DivU => self.emit_div_or_rem(WpType::I64, M::emit_binop_udiv64)?,
+            Operator::I64DivS => self.emit_div_or_rem(WpType::I64, M::emit_binop_sdiv64)?,
+            Operator::I64RemU => self.emit_div_or_rem(WpType::I64, M::emit_binop_urem64)?,
+            Operator::I64RemS => self.emit_div_or_rem(WpType::I64, M::emit_binop_srem64)?,
+            Operator::I64And => self.emit_bop(WpType::I64, M::emit_binop_and64)?,
+            Operator::I64Or => self.emit_bop(WpType::I64, M::emit_binop_or64)?,
+            Operator::I64Xor => self.emit_bop(WpType::I64, M::emit_binop_xor64)?,
+            Operator::I64Eq => self.emit_bop(WpType::I64, M::i64_cmp_eq)?,
+            Operator::I64Ne => self.emit_bop(WpType::I64, M::i64_cmp_ne)?,
+            Operator::I64Eqz => self.emit_uop(WpType::I64, |m, loc, ret| m.i64_cmp_eq(loc, Location::Imm64(0), ret))?,
+            Operator::I64Clz => self.emit_uop(WpType::I64, M::i64_clz)?,
+            Operator::I64Ctz => self.emit_uop(WpType::I64, M::i64_ctz)?,
+            Operator::I64Popcnt => self.emit_uop(WpType::I64, M::i64_popcnt)?,
+            Operator::I64Shl => self.emit_bop(WpType::I64, M::i64_shl)?,
+            Operator::I64ShrU => self.emit_bop(WpType::I64, M::i64_shr)?,
+            Operator::I64ShrS => self.emit_bop(WpType::I64, M::i64_sar)?,
+            Operator::I64Rotl => self.emit_bop(WpType::I64, M::i64_rol)?,
+            Operator::I64Rotr => self.emit_bop(WpType::I64, M::i64_ror)?,
+            Operator::I64LtU => self.emit_bop(WpType::I64, M::i64_cmp_lt_u)?,
+            Operator::I64LeU => self.emit_bop(WpType::I64, M::i64_cmp_le_u)?,
+            Operator::I64GtU => self.emit_bop(WpType::I64, M::i64_cmp_gt_u)?,
+            Operator::I64GeU => self.emit_bop(WpType::I64, M::i64_cmp_ge_u)?,
+            Operator::I64LtS => self.emit_bop(WpType::I64, M::i64_cmp_lt_s)?,
+            Operator::I64LeS => self.emit_bop(WpType::I64, M::i64_cmp_le_s)?,
+            Operator::I64GtS => self.emit_bop(WpType::I64, M::i64_cmp_gt_s)?,
+            Operator::I64GeS => self.emit_bop(WpType::I64, M::i64_cmp_ge_s)?,
             Operator::I64ExtendI32U => {
                 let loc = self.pop_value_released()?;
                 let ret = self.acquire_locations(
@@ -1991,93 +1721,52 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             }
             Operator::F32Eq => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f32_cmp_eq(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f32_cmp_eq)?;
             }
             Operator::F32Ne => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f32_cmp_ne(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f32_cmp_ne)?;
             }
             Operator::F32Lt => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f32_cmp_lt(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f32_cmp_lt)?;
             }
             Operator::F32Le => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f32_cmp_le(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f32_cmp_le)?;
             }
             Operator::F32Gt => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f32_cmp_gt(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f32_cmp_gt)?;
             }
             Operator::F32Ge => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f32_cmp_ge(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f32_cmp_ge)?;
             }
             Operator::F32Nearest => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f32(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f32_nearest(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f32(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F32, M::f32_nearest)?;
             }
             Operator::F32Floor => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f32(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f32_floor(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f32(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F32, M::f32_floor)?;
             }
             Operator::F32Ceil => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f32(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f32_ceil(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f32(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F32, M::f32_ceil)?;
             }
             Operator::F32Trunc => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f32(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f32_trunc(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f32(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F32, M::f32_trunc)?;
             }
             Operator::F32Sqrt => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f32(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f32_sqrt(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f32(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F32, M::f32_sqrt)?;
             }
 
             Operator::F32Copysign => {
@@ -2120,28 +1809,12 @@ impl<'a, M: Machine> FuncGen<'a, M> {
 
             Operator::F32Abs => {
                 // Preserve canonicalization state.
-
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F32, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-
-                self.machine.f32_abs(loc, ret)?;
+                self.emit_uop(WpType::F32, M::f32_abs)?;
             }
 
             Operator::F32Neg => {
                 // Preserve canonicalization state.
-
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F32, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-
-                self.machine.f32_neg(loc, ret)?;
+                self.emit_uop(WpType::F32, M::f32_neg)?;
             }
 
             Operator::F64Const { value } => {
@@ -2157,139 +1830,82 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             }
             Operator::F64Add => {
                 self.fp_stack.pop2()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 2));
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::F64)?;
-
-                self.machine.f64_add(loc_a, loc_b, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 2));
+                self.emit_bop(WpType::F64, M::f64_add)?;
             }
             Operator::F64Sub => {
                 self.fp_stack.pop2()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 2));
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::F64)?;
-
-                self.machine.f64_sub(loc_a, loc_b, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 2));
+                self.emit_bop(WpType::F64, M::f64_sub)?;
             }
             Operator::F64Mul => {
                 self.fp_stack.pop2()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 2));
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::F64)?;
-
-                self.machine.f64_mul(loc_a, loc_b, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 2));
+                self.emit_bop(WpType::F64, M::f64_mul)?;
             }
             Operator::F64Div => {
                 self.fp_stack.pop2()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 2));
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::F64)?;
-
-                self.machine.f64_div(loc_a, loc_b, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 2));
+                self.emit_bop(WpType::F64, M::f64_div)?;
             }
             Operator::F64Max => {
                 self.fp_stack.pop2()?;
-                self.fp_stack
-                    .push(FloatValue::new(self.value_stack.len() - 2));
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::F64)?;
-                self.machine.f64_max(loc_a, loc_b, ret)?;
+                self.fp_stack.push(FloatValue::new(self.value_stack.len() - 2));
+                self.emit_bop(WpType::F64, M::f64_max)?;
             }
             Operator::F64Min => {
                 self.fp_stack.pop2()?;
-                self.fp_stack
-                    .push(FloatValue::new(self.value_stack.len() - 2));
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::F64)?;
-                self.machine.f64_min(loc_a, loc_b, ret)?;
+                self.fp_stack.push(FloatValue::new(self.value_stack.len() - 2));
+                self.emit_bop(WpType::F64, M::f64_min)?;
             }
             Operator::F64Eq => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f64_cmp_eq(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f64_cmp_eq)?;
             }
             Operator::F64Ne => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f64_cmp_ne(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f64_cmp_ne)?;
             }
             Operator::F64Lt => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f64_cmp_lt(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f64_cmp_lt)?;
             }
             Operator::F64Le => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f64_cmp_le(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f64_cmp_le)?;
             }
             Operator::F64Gt => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f64_cmp_gt(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f64_cmp_gt)?;
             }
             Operator::F64Ge => {
                 self.fp_stack.pop2()?;
-                let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(WpType::I32)?;
-                self.machine.f64_cmp_ge(loc_a, loc_b, ret)?;
+                self.emit_bop(WpType::I32, M::f64_cmp_ge)?;
             }
             Operator::F64Nearest => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f64_nearest(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F64, M::f64_nearest)?;
             }
             Operator::F64Floor => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f64_floor(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F64, M::f64_floor)?;
             }
             Operator::F64Ceil => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f64_ceil(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F64, M::f64_ceil)?;
             }
             Operator::F64Trunc => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f64_trunc(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F64, M::f64_trunc)?;
             }
             Operator::F64Sqrt => {
                 self.fp_stack.pop1()?;
-                self.fp_stack
-                    .push(FloatValue::cncl_f64(self.value_stack.len() - 1));
-                let loc = self.pop_value_released()?;
-                let ret = self.acquire_locations(
-                    &[(WpType::F64, MachineValue::WasmStack(self.value_stack.len()))],
-                    false,
-                )?[0];
-                self.value_stack.push(ret);
-                self.machine.f64_sqrt(loc, ret)?;
+                self.fp_stack.push(FloatValue::cncl_f64(self.value_stack.len() - 1));
+                self.emit_uop(WpType::F64, M::f64_sqrt)?;
             }
 
             Operator::F64Copysign => {
@@ -4540,7 +4156,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                      offset,
                      heap_access_oob,
                      unaligned_atomic| {
-                        this.machine.i64_atomic_load(
+                        this.machine.i64_load(
                             target,
                             memarg,
                             ret,
@@ -4567,7 +4183,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                      offset,
                      heap_access_oob,
                      unaligned_atomic| {
-                        this.machine.i64_atomic_load_8u(
+                        this.machine.i64_load_8u(
                             target,
                             memarg,
                             ret,
@@ -4594,7 +4210,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                      offset,
                      heap_access_oob,
                      unaligned_atomic| {
-                        this.machine.i64_atomic_load_16u(
+                        this.machine.i64_load_16u(
                             target,
                             memarg,
                             ret,
@@ -4621,102 +4237,10 @@ impl<'a, M: Machine> FuncGen<'a, M> {
                      offset,
                      heap_access_oob,
                      unaligned_atomic| {
-                        this.machine.i64_atomic_load_32u(
+                        this.machine.i64_load_32u(
                             target,
                             memarg,
                             ret,
-                            need_check,
-                            imported_memories,
-                            offset,
-                            heap_access_oob,
-                            unaligned_atomic,
-                        )
-                    },
-                )?;
-            }
-            Operator::I64AtomicStore { ref memarg } => {
-                let target_value = self.pop_value_released()?;
-                let target_addr = self.pop_value_released()?;
-                self.op_memory(
-                    |this,
-                     need_check,
-                     imported_memories,
-                     offset,
-                     heap_access_oob,
-                     unaligned_atomic| {
-                        this.machine.i64_atomic_save(
-                            target_value,
-                            memarg,
-                            target_addr,
-                            need_check,
-                            imported_memories,
-                            offset,
-                            heap_access_oob,
-                            unaligned_atomic,
-                        )
-                    },
-                )?;
-            }
-            Operator::I64AtomicStore8 { ref memarg } => {
-                let target_value = self.pop_value_released()?;
-                let target_addr = self.pop_value_released()?;
-                self.op_memory(
-                    |this,
-                     need_check,
-                     imported_memories,
-                     offset,
-                     heap_access_oob,
-                     unaligned_atomic| {
-                        this.machine.i64_atomic_save_8(
-                            target_value,
-                            memarg,
-                            target_addr,
-                            need_check,
-                            imported_memories,
-                            offset,
-                            heap_access_oob,
-                            unaligned_atomic,
-                        )
-                    },
-                )?;
-            }
-            Operator::I64AtomicStore16 { ref memarg } => {
-                let target_value = self.pop_value_released()?;
-                let target_addr = self.pop_value_released()?;
-                self.op_memory(
-                    |this,
-                     need_check,
-                     imported_memories,
-                     offset,
-                     heap_access_oob,
-                     unaligned_atomic| {
-                        this.machine.i64_atomic_save_16(
-                            target_value,
-                            memarg,
-                            target_addr,
-                            need_check,
-                            imported_memories,
-                            offset,
-                            heap_access_oob,
-                            unaligned_atomic,
-                        )
-                    },
-                )?;
-            }
-            Operator::I64AtomicStore32 { ref memarg } => {
-                let target_value = self.pop_value_released()?;
-                let target_addr = self.pop_value_released()?;
-                self.op_memory(
-                    |this,
-                     need_check,
-                     imported_memories,
-                     offset,
-                     heap_access_oob,
-                     unaligned_atomic| {
-                        this.machine.i64_atomic_save_32(
-                            target_value,
-                            memarg,
-                            target_addr,
                             need_check,
                             imported_memories,
                             offset,
@@ -6814,6 +6338,46 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             fde,
         ))
     }
+
+    /// Helper function for emitting binary operations
+    fn emit_bop(
+        &mut self,
+        ty: WpType,
+        op: impl FnOnce(&mut M, Location<M::GPR, M::SIMD>, Location<M::GPR, M::SIMD>, Location<M::GPR, M::SIMD>) -> Result<(), CompileError>,
+    ) -> Result<(), CompileError> {
+        let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(ty)?;
+        op(&mut self.machine, loc_a, loc_b, ret)
+    }
+
+    /// Helper function for emitting unary operations
+    fn emit_uop(
+        &mut self,
+        ty: WpType,
+        op: impl FnOnce(&mut M, Location<M::GPR, M::SIMD>, Location<M::GPR, M::SIMD>) -> Result<(), CompileError>,
+    ) -> Result<(), CompileError> {
+        let (loc, ret) = self.i1o1_prepare(ty)?;
+        op(&mut self.machine, loc, ret)
+    }
+
+    /// Helper function for emitting division or remainder operations
+    fn emit_div_or_rem(
+        &mut self,
+        ty: WpType,
+        op: impl FnOnce(&mut M, Location<M::GPR, M::SIMD>, Location<M::GPR, M::SIMD>, Location<M::GPR, M::SIMD>, Label, Label) -> Result<usize, CompileError>,
+    ) -> Result<(), CompileError> {
+        let I2O1 { loc_a, loc_b, ret } = self.i2o1_prepare(ty)?;
+        let offset = op(
+            &mut self.machine,
+            loc_a,
+            loc_b,
+            ret,
+            self.special_labels.integer_division_by_zero,
+            self.special_labels.integer_overflow,
+        )?;
+        self.mark_offset_trappable(offset);
+        Ok(())
+    }
+
     // FIXME: This implementation seems to be not enough to resolve all kinds of register dependencies
     // at call place.
     #[allow(clippy::type_complexity)]
@@ -6866,7 +6430,7 @@ impl<'a, M: Machine> FuncGen<'a, M> {
 
     /// Try to fold and apply constant folding result
     fn try_constant_fold_and_apply(&mut self, op: &Operator) -> Result<ConstantFoldResult, CompileError> {
-        match op {
+                match op {
             // Handle binary arithmetic operations
             Operator::I32Add => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_add(b)),
             Operator::I32Sub => self.try_fold_binary_op_and_apply(|a, b| a.wrapping_sub(b)),
@@ -6903,6 +6467,53 @@ impl<'a, M: Machine> FuncGen<'a, M> {
             Operator::I32ShrS => self.try_fold_shift_and_apply(|a, b| a.wrapping_shr(b as u32)),
             Operator::I32Rotl => self.try_fold_shift_and_apply(|a, b| a.rotate_left(b as u32) as i32),
             Operator::I32Rotr => self.try_fold_shift_and_apply(|a, b| a.rotate_right(b as u32) as i32),
+
+            // Handle floating-point operations
+            Operator::F32Add => self.try_fold_f32_binary_op_and_apply(|a, b| a + b),
+            Operator::F32Sub => self.try_fold_f32_binary_op_and_apply(|a, b| a - b),
+            Operator::F32Mul => self.try_fold_f32_binary_op_and_apply(|a, b| a * b),
+            Operator::F32Div => self.try_fold_f32_binary_op_and_apply(|a, b| a / b),
+            Operator::F32Min => self.try_fold_f32_binary_op_and_apply(|a, b| a.min(b)),
+            Operator::F32Max => self.try_fold_f32_binary_op_and_apply(|a, b| a.max(b)),
+            Operator::F32Copysign => self.try_fold_f32_binary_op_and_apply(|a, b| a.copysign(b)),
+            
+            Operator::F64Add => self.try_fold_f64_binary_op_and_apply(|a, b| a + b),
+            Operator::F64Sub => self.try_fold_f64_binary_op_and_apply(|a, b| a - b),
+            Operator::F64Mul => self.try_fold_f64_binary_op_and_apply(|a, b| a * b),
+            Operator::F64Div => self.try_fold_f64_binary_op_and_apply(|a, b| a / b),
+            Operator::F64Min => self.try_fold_f64_binary_op_and_apply(|a, b| a.min(b)),
+            Operator::F64Max => self.try_fold_f64_binary_op_and_apply(|a, b| a.max(b)),
+            Operator::F64Copysign => self.try_fold_f64_binary_op_and_apply(|a, b| a.copysign(b)),
+
+            Operator::F32Eq => self.try_fold_f32_comparison_and_apply(|a, b| a == b),
+            Operator::F32Ne => self.try_fold_f32_comparison_and_apply(|a, b| a != b),
+            Operator::F32Lt => self.try_fold_f32_comparison_and_apply(|a, b| a < b),
+            Operator::F32Le => self.try_fold_f32_comparison_and_apply(|a, b| a <= b),
+            Operator::F32Gt => self.try_fold_f32_comparison_and_apply(|a, b| a > b),
+            Operator::F32Ge => self.try_fold_f32_comparison_and_apply(|a, b| a >= b),
+
+            Operator::F64Eq => self.try_fold_f64_comparison_and_apply(|a, b| a == b),
+            Operator::F64Ne => self.try_fold_f64_comparison_and_apply(|a, b| a != b),
+            Operator::F64Lt => self.try_fold_f64_comparison_and_apply(|a, b| a < b),
+            Operator::F64Le => self.try_fold_f64_comparison_and_apply(|a, b| a <= b),
+            Operator::F64Gt => self.try_fold_f64_comparison_and_apply(|a, b| a > b),
+            Operator::F64Ge => self.try_fold_f64_comparison_and_apply(|a, b| a >= b),
+
+            Operator::F32Abs => self.try_fold_f32_unary_op_and_apply(|a| a.abs()),
+            Operator::F32Neg => self.try_fold_f32_unary_op_and_apply(|a| -a),
+            Operator::F32Ceil => self.try_fold_f32_unary_op_and_apply(|a| a.ceil()),
+            Operator::F32Floor => self.try_fold_f32_unary_op_and_apply(|a| a.floor()),
+            Operator::F32Trunc => self.try_fold_f32_unary_op_and_apply(|a| a.trunc()),
+            Operator::F32Nearest => self.try_fold_f32_unary_op_and_apply(|a| a.round()),
+            Operator::F32Sqrt => self.try_fold_f32_unary_op_and_apply(|a| a.sqrt()),
+
+            Operator::F64Abs => self.try_fold_f64_unary_op_and_apply(|a| a.abs()),
+            Operator::F64Neg => self.try_fold_f64_unary_op_and_apply(|a| -a),
+            Operator::F64Ceil => self.try_fold_f64_unary_op_and_apply(|a| a.ceil()),
+            Operator::F64Floor => self.try_fold_f64_unary_op_and_apply(|a| a.floor()),
+            Operator::F64Trunc => self.try_fold_f64_unary_op_and_apply(|a| a.trunc()),
+            Operator::F64Nearest => self.try_fold_f64_unary_op_and_apply(|a| a.round()),
+            Operator::F64Sqrt => self.try_fold_f64_unary_op_and_apply(|a| a.sqrt()),
             
             // Other operations do not perform constant folding
             _ => Ok(ConstantFoldResult::NotApplicable),
@@ -7126,11 +6737,135 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         }
     }
 
+    /// Try to fold f32 binary arithmetic operations and apply directly
+    fn try_fold_f32_binary_op_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(f32, f32) -> f32,
+    {
+        // Check if constant folding can be performed
+        if !self.can_constant_fold(2) {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        // Check if the top two values are constants
+        if !self.are_top_two_constants() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 2;
+        let b_index = stack_len - 1;
+        
+        // Get constant values from stack constant tracker
+        let a_constant = self.get_stack_constant(a_index);
+        let b_constant = self.get_stack_constant(b_index);
+        
+        if let (Some(ConstantValue::F32(a)), Some(ConstantValue::F32(b))) = (a_constant, b_constant) {
+            // Perform constant folding
+            let result = op(*a, *b);
+            
+            // Update statistics
+            self.constant_tracker.stats.folded_operations += 1;
+            self.constant_tracker.stats.saved_instructions += 1;
+            
+            // Remove original operands
+            self.value_stack.pop(); // Remove second operand
+            self.value_stack.pop(); // Remove first operand
+            
+            if let Some(frame) = self.control_stack.last_mut() {
+                frame.constants_in_block = frame.constants_in_block.saturating_sub(1);
+            }
+
+            // Remove corresponding stack constant tracker
+            self.constant_tracker.stack_constants.pop();
+            self.constant_tracker.stack_constants.pop();
+            
+            // Add folded constant
+            self.value_stack.push(Location::Imm32(result.to_bits()));
+            self.state.wasm_stack.push(WasmAbstractValue::Const(result.to_bits() as u64));
+            
+            // Update stack constant tracker
+            self.constant_tracker.stack_constants.push(Some(ConstantValue::F32(result)));
+            
+            Ok(ConstantFoldResult::Applied)
+        } else {
+            Ok(ConstantFoldResult::NotApplicable)
+        }
+    }
+
+    /// Try to fold f64 binary arithmetic operations and apply directly
+    fn try_fold_f64_binary_op_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(f64, f64) -> f64,
+    {
+        // Check if constant folding can be performed
+        if !self.can_constant_fold(2) {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        // Check if the top two values are constants
+        if !self.are_top_two_constants() {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+        
+        let stack_len = self.value_stack.len();
+        let a_index = stack_len - 2;
+        let b_index = stack_len - 1;
+        
+        // Get constant values from stack constant tracker
+        let a_constant = self.get_stack_constant(a_index);
+        let b_constant = self.get_stack_constant(b_index);
+        
+        if let (Some(ConstantValue::F64(a)), Some(ConstantValue::F64(b))) = (a_constant, b_constant) {
+            // Perform constant folding
+            let result = op(*a, *b);
+            
+            // Update statistics
+            self.constant_tracker.stats.folded_operations += 1;
+            self.constant_tracker.stats.saved_instructions += 1;
+            
+            // Remove original operands
+            self.value_stack.pop(); // Remove second operand
+            self.value_stack.pop(); // Remove first operand
+            
+            if let Some(frame) = self.control_stack.last_mut() {
+                frame.constants_in_block = frame.constants_in_block.saturating_sub(1);
+            }
+
+            // Remove corresponding stack constant tracker
+            self.constant_tracker.stack_constants.pop();
+            self.constant_tracker.stack_constants.pop();
+            
+            // Add folded constant
+            self.value_stack.push(Location::Imm64(result.to_bits()));
+            self.state.wasm_stack.push(WasmAbstractValue::Const(result.to_bits()));
+            
+            // Update stack constant tracker
+            self.constant_tracker.stack_constants.push(Some(ConstantValue::F64(result)));
+            
+            Ok(ConstantFoldResult::Applied)
+        } else {
+            Ok(ConstantFoldResult::NotApplicable)
+        }
+    }
+
     /// Get constant value from location (supports all types)
     fn get_constant_value_any(&self, loc: &Location<M::GPR, M::SIMD>) -> Result<Option<ConstantValue>, CompileError> {
         match loc {
-            Location::Imm32(value) => Ok(Some(ConstantValue::I32(*value as i32))),
-            Location::Imm64(value) => Ok(Some(ConstantValue::I64(*value as i64))),
+            Location::Imm32(value) => {
+                if self.value_stack.len() > 0 && self.fp_stack.len() > 0 && self.fp_stack.last().unwrap().depth == self.value_stack.len() - 1 {
+                    Ok(Some(ConstantValue::F32(f32::from_bits(*value))))
+                } else {
+                    Ok(Some(ConstantValue::I32(*value as i32)))
+                }
+            },
+            Location::Imm64(value) => {
+                if self.value_stack.len() > 0 && self.fp_stack.len() > 0 && self.fp_stack.last().unwrap().depth == self.value_stack.len() - 1 {
+                    Ok(Some(ConstantValue::F64(f64::from_bits(*value))))
+                } else {
+                    Ok(Some(ConstantValue::I64(*value as i64)))
+                }
+            },
             _ => Ok(None),
         }
     }
@@ -7206,6 +6941,88 @@ impl<'a, M: Machine> FuncGen<'a, M> {
         
         let top_index = self.value_stack.len() - 1;
         self.get_stack_constant(top_index).is_some()
+    }
+
+    fn try_fold_f32_comparison_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(f32, f32) -> bool,
+    {
+        if !self.can_constant_fold(2) {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+
+        let (a, b) = match (self.get_stack_constant(self.value_stack.len() - 2), self.get_stack_constant(self.value_stack.len() - 1)) {
+            (Some(ConstantValue::F32(a)), Some(ConstantValue::F32(b))) => (*a, *b),
+            _ => return Ok(ConstantFoldResult::NotApplicable),
+        };
+
+        let result = op(a, b) as i32;
+        self.value_stack.pop();
+        self.value_stack.pop();
+        self.value_stack.push(Location::Imm32(result as u32));
+        self.state.wasm_stack.push(WasmAbstractValue::Const(result as u64));
+        Ok(ConstantFoldResult::Applied)
+    }
+
+    fn try_fold_f64_comparison_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(f64, f64) -> bool,
+    {
+        if !self.can_constant_fold(2) {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+
+        let (a, b) = match (self.get_stack_constant(self.value_stack.len() - 2), self.get_stack_constant(self.value_stack.len() - 1)) {
+            (Some(ConstantValue::F64(a)), Some(ConstantValue::F64(b))) => (*a, *b),
+            _ => return Ok(ConstantFoldResult::NotApplicable),
+        };
+
+        let result = op(a, b) as i32;
+        self.value_stack.pop();
+        self.value_stack.pop();
+        self.value_stack.push(Location::Imm32(result as u32));
+        self.state.wasm_stack.push(WasmAbstractValue::Const(result as u64));
+        Ok(ConstantFoldResult::Applied)
+    }
+
+    fn try_fold_f32_unary_op_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(f32) -> f32,
+    {
+        if !self.can_constant_fold(1) {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+
+        let a = match self.get_stack_constant(self.value_stack.len() - 1) {
+            Some(ConstantValue::F32(a)) => *a,
+            _ => return Ok(ConstantFoldResult::NotApplicable),
+        };
+
+        let result = op(a);
+        self.value_stack.pop();
+        self.value_stack.push(Location::Imm32(result.to_bits()));
+        self.state.wasm_stack.push(WasmAbstractValue::Const(result.to_bits() as u64));
+        Ok(ConstantFoldResult::Applied)
+    }
+
+    fn try_fold_f64_unary_op_and_apply<F>(&mut self, op: F) -> Result<ConstantFoldResult, CompileError>
+    where
+        F: FnOnce(f64) -> f64,
+    {
+        if !self.can_constant_fold(1) {
+            return Ok(ConstantFoldResult::NotApplicable);
+        }
+
+        let a = match self.get_stack_constant(self.value_stack.len() - 1) {
+            Some(ConstantValue::F64(a)) => *a,
+            _ => return Ok(ConstantFoldResult::NotApplicable),
+        };
+
+        let result = op(a);
+        self.value_stack.pop();
+        self.value_stack.push(Location::Imm64(result.to_bits()));
+        self.state.wasm_stack.push(WasmAbstractValue::Const(result.to_bits()));
+        Ok(ConstantFoldResult::Applied)
     }
 
 }
