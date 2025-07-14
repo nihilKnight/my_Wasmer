@@ -1,0 +1,119 @@
+/usr/bin/nohup: ignoring input
+warning: variants `F32` and `F64` are never constructed
+   --> lib/compiler-singlepass/src/codegen.rs:126:5
+    |
+123 | enum ConstantValue {
+    |      ------------- variants in this enum
+...
+126 |     F32(f32),
+    |     ^^^
+127 |     F64(f64),
+    |     ^^^
+    |
+    = note: `ConstantValue` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `wasmer-compiler-singlepass` (lib) generated 1 warning
+   Compiling wasmer-workspace v6.0.1 (/workspace/my_Wasmer)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 26.05s
+     Running tests/compilers/main.rs (target/debug/deps/compilers-f7d733ae1b8dc866)
+
+running 1 test
+test wasi::wasitests::nightly_2022_10_18::host_fs::fd_sync::singlepass::singlepass ... FAILED
+
+failures:
+
+---- wasi::wasitests::nightly_2022_10_18::host_fs::fd_sync::singlepass::singlepass stdout ----
+Running wasi wast `tests/wasi-wast/wasi/nightly_2022_10_18/fd_sync.wast`
+Error: failed to run WASI `_start` function: failed with stdout: ""
+stderr: ""
+
+Caused by:
+    RuntimeError: out of bounds memory access
+        at <unnamed> (<module>[47]:0x2433)
+        at <unnamed> (<module>[108]:0x54c1)
+        at <unnamed> (<module>[189]:0xd9cb)
+        at <unnamed> (<module>[212]:0xefc7)
+        at <unnamed> (<module>[209]:0xed1f)
+        at <unnamed> (<module>[168]:0xc172)
+        at <unnamed> (<module>[104]:0x4f2f)
+        at <unnamed> (<module>[20]:0xf54)
+        at <unnamed> (<module>[22]:0x15f5)
+        at <unnamed> (<module>[21]:0x14f5)
+        at <unnamed> (<module>[220]:0xf38e)
+
+Stack backtrace:
+   0: std::backtrace_rs::backtrace::libunwind::trace
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/../../backtrace/src/backtrace/libunwind.rs:116:5
+   1: std::backtrace_rs::backtrace::trace_unsynchronized
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/../../backtrace/src/backtrace/mod.rs:66:5
+   2: std::backtrace::Backtrace::create
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/backtrace.rs:331:13
+   3: <E as anyhow::context::ext::StdError>::ext_context
+             at /root/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anyhow-1.0.98/src/backtrace.rs:27:14
+   4: anyhow::context::<impl anyhow::Context<T,E> for core::result::Result<T,E>>::with_context
+             at /root/.cargo/registry/src/index.crates.io-6f17d22bba15001f/anyhow-1.0.98/src/context.rs:65:31
+   5: wasmer_wast::wasi_wast::WasiTest::run
+             at ./tests/lib/wast/src/wasi_wast.rs:156:17
+   6: compilers::wasi::run_wasi
+             at ./tests/compilers/wasi.rs:37:21
+   7: compilers::wasi::wasitests::nightly_2022_10_18::host_fs::fd_sync::fd_sync
+             at ./target/debug/build/wasmer-workspace-21e6bdafcabd0694/out/generated_wasitests.rs:3362:17
+   8: compilers::wasi::wasitests::nightly_2022_10_18::host_fs::fd_sync::singlepass::singlepass
+             at ./target/debug/build/wasmer-workspace-21e6bdafcabd0694/out/generated_wasitests.rs:3360:13
+   9: compilers::wasi::wasitests::nightly_2022_10_18::host_fs::fd_sync::singlepass::singlepass::{{closure}}
+             at ./target/debug/build/wasmer-workspace-21e6bdafcabd0694/out/generated_wasitests.rs:3361:52
+  10: core::ops::function::FnOnce::call_once
+             at /root/.rustup/toolchains/1.84-aarch64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ops/function.rs:250:5
+  11: core::ops::function::FnOnce::call_once
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/core/src/ops/function.rs:250:5
+  12: test::__rust_begin_short_backtrace
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/test/src/lib.rs:632:18
+  13: test::run_test_in_process::{{closure}}
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/test/src/lib.rs:655:60
+  14: <core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/core/src/panic/unwind_safe.rs:272:9
+  15: std::panicking::try::do_call
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/panicking.rs:557:40
+  16: std::panicking::try
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/panicking.rs:520:19
+  17: std::panic::catch_unwind
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/panic.rs:358:14
+  18: test::run_test_in_process
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/test/src/lib.rs:655:27
+  19: test::run_test::{{closure}}
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/test/src/lib.rs:576:43
+  20: test::run_test::{{closure}}
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/test/src/lib.rs:606:41
+  21: std::sys::backtrace::__rust_begin_short_backtrace
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/sys/backtrace.rs:154:18
+  22: std::thread::Builder::spawn_unchecked_::{{closure}}::{{closure}}
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/thread/mod.rs:561:17
+  23: <core::panic::unwind_safe::AssertUnwindSafe<F> as core::ops::function::FnOnce<()>>::call_once
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/core/src/panic/unwind_safe.rs:272:9
+  24: std::panicking::try::do_call
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/panicking.rs:557:40
+  25: std::panicking::try
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/panicking.rs:520:19
+  26: std::panic::catch_unwind
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/panic.rs:358:14
+  27: std::thread::Builder::spawn_unchecked_::{{closure}}
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/thread/mod.rs:559:30
+  28: core::ops::function::FnOnce::call_once{{vtable.shim}}
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/core/src/ops/function.rs:250:5
+  29: <alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/alloc/src/boxed.rs:1972:9
+  30: <alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/alloc/src/boxed.rs:1972:9
+  31: std::sys::pal::unix::thread::Thread::new::thread_start
+             at /rustc/e71f9a9a98b0faf423844bf0ba7438f29dc27d58/library/std/src/sys/pal/unix/thread.rs:105:17
+  32: <unknown>
+  33: <unknown>
+
+
+failures:
+    wasi::wasitests::nightly_2022_10_18::host_fs::fd_sync::singlepass::singlepass
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 797 filtered out; finished in 3.33s
+
+error: test failed, to rerun pass `--test compilers`
