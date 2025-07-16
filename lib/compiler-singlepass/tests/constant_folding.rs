@@ -59,3 +59,19 @@ fn test_simple_cmp() {
     assert_eq!(eq, 1);
     assert_eq!(lt, 1);
 }
+
+#[test]
+fn test_matrix_init() {
+    let binding = fs::read("./tests/const_folding/matrix_init.wast").unwrap();
+    let wasm = wat2wasm(&binding).unwrap();
+    let result = run_wasm_and_get_export(&wasm, "test");
+    assert_eq!(result, 42);
+}
+
+#[test]
+fn test_loop_invariant() {
+    let binding = fs::read("./tests/const_folding/loop_invariant.wast").unwrap();
+    let wasm = wat2wasm(&binding).unwrap();
+    let result = run_wasm_and_get_export(&wasm, "test");
+    assert_eq!(result, 15);
+}

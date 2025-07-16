@@ -6,6 +6,7 @@ use wasmer_compiler_singlepass::Singlepass;
 fn generate_constant_folding_module() -> String {
     r#"
     (module
+        (memory 1)
         ;; Function with many constant folding opportunities
         (func $constant_folding_heavy (param i32) (result i32)
             ;; Arithmetic chain with constants
@@ -167,6 +168,20 @@ fn generate_constant_folding_module() -> String {
         (export "constant_folding_heavy" (func $constant_folding_heavy))
         (export "dynamic_operations" (func $dynamic_operations))
         (export "loop_with_constants" (func $loop_with_constants))
+
+        ;; Function for matrix initialization benchmark
+        (func $matrix_init_heavy
+            ;; A sequence of memory stores with constant address calculations
+            i32.const 4 i32.const 8 i32.mul i32.const 12 i32.add i32.const 1 i32.store
+            i32.const 5 i32.const 9 i32.mul i32.const 13 i32.add i32.const 2 i32.store
+            i32.const 6 i32.const 10 i32.mul i32.const 14 i32.add i32.const 3 i32.store
+            i32.const 7 i32.const 11 i32.mul i32.const 15 i32.add i32.const 4 i32.store
+            i32.const 8 i32.const 12 i32.mul i32.const 16 i32.add i32.const 5 i32.store
+            i32.const 9 i32.const 13 i32.mul i32.const 17 i32.add i32.const 6 i32.store
+            i32.const 10 i32.const 14 i32.mul i32.const 18 i32.add i32.const 7 i32.store
+            i32.const 11 i32.const 15 i32.mul i32.const 19 i32.add i32.const 8 i32.store
+        )
+        (export "matrix_init_heavy" (func $matrix_init_heavy))
     )
     "#
     .to_string()
@@ -322,10 +337,52 @@ fn bench_loop_iterations_impact(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_matrix_init_heavy(c: &mut Criterion) {
+    let mut group = c.benchmark_group("matrix_init_heavy");
+    let wat = generate_constant_folding_module();
+    let wasm_bytes = wat2wasm(wat.as_bytes()).unwrap();
+
+    // Test with constant folding enabled
+    {
+        let config = Singlepass::new();
+        let engine = EngineBuilder::new(config);
+        let mut store = Store::new(engine);
+        let module = Module::new(&store, &wasm_bytes).unwrap();
+        let instance = Instance::new(&mut store, &module, &imports! {}).unwrap();
+        let func = instance.exports.get_function("matrix_init_heavy").unwrap();
+
+        group.bench_function("enabled", |b| {
+            b.iter(|| {
+                func.call(&mut store, &[]).unwrap();
+            })
+        });
+    }
+
+    // Test with constant folding disabled
+    {
+        let mut config = Singlepass::new();
+        config.enable_constant_folding = false;
+        let engine = EngineBuilder::new(config);
+        let mut store = Store::new(engine);
+        let module = Module::new(&store, &wasm_bytes).unwrap();
+        let instance = Instance::new(&mut store, &module, &imports! {}).unwrap();
+        let func = instance.exports.get_function("matrix_init_heavy").unwrap();
+
+        group.bench_function("disabled", |b| {
+            b.iter(|| {
+                func.call(&mut store, &[]).unwrap();
+            })
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_constant_folding_enabled_vs_disabled,
     bench_constant_folding_depth_impact,
-    bench_loop_iterations_impact
+    bench_loop_iterations_impact,
+    bench_matrix_init_heavy
 );
 criterion_main!(benches); 
